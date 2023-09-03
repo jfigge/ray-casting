@@ -15,79 +15,116 @@ import (
 )
 
 const (
-	Red    = uint32(0xFF0000FF)
 	Green1 = uint32(0x00FF00FF)
-	Green2 = uint32(0x00CC00FF)
-	Green3 = uint32(0x009900FF)
-	Green4 = uint32(0x006600FF)
-	Green5 = uint32(0x003300FF)
+	Green2 = uint32(0x99CC99FF)
+	Green3 = uint32(0x99ccFF)
+	Green4 = uint32(0xcc6699FF)
+	Green5 = uint32(0x993366FF)
 	Blue   = uint32(0x0000FFFF)
 
 	StepSize = 2
 )
 
-type line struct {
+const (
+	ArenaWidth    = 600
+	ArenaHeight   = 600
+	WallHeight    = 200
+	PLayerStartX  = 300
+	PlayerStartY  = 300
+	PlayerHeight  = 100
+	PortalWidth   = 320
+	HorizontalFOV = 90
+	VerticalFOV   = 45
+	RayCount      = 50
+)
+
+var WallColors = []uint32{Green1, Green2, Green3, Green4, Green5}
+
+type ClosestEntity struct {
+	X     float32
+	Y     float32
+	color uint32
+}
+
+type Wall struct {
 	X1, Y1, X2, Y2 float32
 	color          uint32
 }
 
-type rayCast struct {
-	pos   *sdl.FPoint
-	angle float64
+type Player struct {
+	position  *sdl.FPoint
+	height    int32
+	direction float64
+	fov       *Fov
 }
 
-type fov struct {
-	width  int32
-	heigth int32
+type Fov struct {
+	portalWidth    int32
+	portalHeight   float32
+	portalRect     *sdl.FRect
+	portalDistance float64
+	portalDelta    float32
+	fisheyeDelta   float64
+	hFOV           float64
+	vFOV           float64
+	RayDelta       float64
+	RayStart       float64
+	RayEnd         float64
 }
 
 type Controller struct {
 	graphics.BaseHandler
 	graphics.CoreMethods
-	width      int32
-	height     int32
-	panelW     int32
-	panelDelta float32
-	panelDiag  float32
-	fovRayCnt  int32
-	fovDegrees int32
-	fovDelta   float64
-	fovStart   float64
-	fovDStart  float64
-	walls      []*line
-	ray        *rayCast
+	arenaWidth  int32
+	arenaHeight int32
+	WallHeight  float64
+	walls       []*Wall
+	player      Player
 }
 
-func NewController(width int32, height int32) *Controller {
-	W := float32(width / 2)
-	H := float32(height)
+func NewController() *Controller {
 	c := &Controller{
-		width:     width,
-		height:    height,
-		panelDiag: float32(math.Sqrt(float64(W*W + H*H))),
-		walls: []*line{
-			{X1: 0, Y1: 1, X2: W, Y2: 1, color: Blue},
-			{X1: W, Y1: 0, X2: W, Y2: H - 1, color: Blue},
-			{X1: W, Y1: H - 1, X2: 0, Y2: H - 1, color: Blue},
-			{X1: 0, Y1: H - 1, X2: 0, Y2: 1, color: Blue},
+		arenaWidth:  ArenaWidth,
+		arenaHeight: ArenaHeight,
+		WallHeight:  WallHeight,
+		player: Player{
+			position: &sdl.FPoint{
+				X: PLayerStartX,
+				Y: PlayerStartY,
+			},
+			height:    PlayerHeight,
+			direction: 0,
+			fov: &Fov{
+				portalWidth: PortalWidth,
+				hFOV:        (HorizontalFOV * math.Pi) / 180,
+				vFOV:        (VerticalFOV * math.Pi) / 180,
+			},
+		},
+		walls: []*Wall{
+			{X1: 0, Y1: 1, X2: ArenaWidth, Y2: 1, color: Blue},
+			{X1: ArenaWidth, Y1: 0, X2: ArenaWidth, Y2: ArenaHeight - 1, color: Blue},
+			{X1: ArenaWidth, Y1: ArenaHeight - 1, X2: 0, Y2: ArenaHeight - 1, color: Blue},
+			{X1: 0, Y1: ArenaHeight - 1, X2: 0, Y2: 1, color: Blue},
 			{X1: 161, Y1: 307, X2: 274, Y2: 342, color: Green1},
 			{X1: 167, Y1: 423, X2: 180, Y2: 331, color: Green2},
 			{X1: 439, Y1: 382, X2: 437, Y2: 537, color: Green3},
 			{X1: 86, Y1: 246, X2: 348, Y2: 45, color: Green4},
 			{X1: 432, Y1: 86, X2: 281, Y2: 69, color: Green5},
 		},
-		ray: &rayCast{
-			pos:   &sdl.FPoint{X: W / 2, Y: H / 2},
-			angle: 0,
-		},
-		fovRayCnt:  100,
-		fovDegrees: 60,
-		panelW:     width / 2,
 	}
-	c.fovDelta = float64(c.fovDegrees) * math.Pi / 180 / float64(c.fovRayCnt)
-	c.fovStart = c.ray.angle - c.fovDelta*float64(c.fovRayCnt/2)
-	c.fovDStart = c.fovStart
-	c.panelDelta = float32(c.panelW / c.fovRayCnt)
+	c.player.fov.portalDistance = float64(c.player.fov.portalWidth/2) / math.Tan(c.player.fov.hFOV/2)
+	c.player.fov.portalHeight = float32(math.Floor(math.Tan(c.player.fov.vFOV/2) * c.player.fov.portalDistance * 2))
+	c.player.fov.portalRect = &sdl.FRect{
+		X: float32(ArenaWidth + ArenaWidth/2 - c.player.fov.portalWidth/2 - 1),
+		Y: ArenaHeight/2 - c.player.fov.portalHeight/2 - 1,
+		W: float32(c.player.fov.portalWidth + 2),
+		H: c.player.fov.portalHeight + 2,
+	}
+	c.player.fov.portalDelta = float32(c.player.fov.portalWidth) / float32(RayCount)
+	c.player.fov.fisheyeDelta = -(HorizontalFOV * math.Pi) / 360
+	c.player.fov.RayDelta = c.player.fov.hFOV / float64(RayCount)
+	c.player.fov.RayStart = c.player.direction - (HorizontalFOV*math.Pi)/360 + float64(c.player.fov.RayDelta)/2
+	c.player.fov.RayEnd = c.player.direction + (HorizontalFOV*math.Pi)/360
 
 	return c
 }
@@ -127,59 +164,76 @@ func (c *Controller) OnUpdate() {
 }
 
 func (c *Controller) OnDraw(renderer *sdl.Renderer) {
-	graphics.ErrorTrap(c.Clear(renderer, uint32(0)))
+	graphics.ErrorTrap(c.Clear(renderer, uint32(0x232323)))
 	c.drawRays(renderer)
 	c.drawWalls(renderer)
-	graphics.ErrorTrap(c.WriteFrameRate(renderer, c.width-115, 0))
+	c.drawPortal(renderer)
+	graphics.ErrorTrap(c.WriteFrameRate(renderer, c.arenaWidth-115, 0))
 }
 
 func (c *Controller) drawWalls(renderer *sdl.Renderer) {
 	for _, wall := range c.walls {
 		graphics.ErrorTrap(renderer.SetDrawColor(uint8(wall.color>>24), uint8(wall.color>>16), uint8(wall.color>>8), uint8(wall.color)))
-		_ = renderer.DrawLineF(wall.X1, wall.Y1, wall.X2, wall.Y2)
+		graphics.ErrorTrap(renderer.DrawLineF(wall.X1, wall.Y1, wall.X2, wall.Y2))
 	}
 }
 
+func (c *Controller) drawPortal(renderer *sdl.Renderer) {
+	graphics.ErrorTrap(renderer.SetDrawColor(uint8(0xff), uint8(0), uint8(0), uint8(0xff)))
+	graphics.ErrorTrap(renderer.DrawRectF(c.player.fov.portalRect))
+
+	//X1 := c.player.position.X + float32(math.Sin(c.player.fov.RayStart-c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
+	//Y1 := c.player.position.Y - float32(math.Cos(c.player.fov.RayStart-+c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
+	//X2 := c.player.position.X + float32(math.Sin(c.player.fov.RayEnd)*c.player.fov.portalDistance)
+	//Y2 := c.player.position.Y - float32(math.Cos(c.player.fov.RayEnd)*c.player.fov.portalDistance)
+	//graphics.ErrorTrap(renderer.SetDrawColor(uint8(0xff), uint8(0), uint8(0), uint8(0x80)))
+	//graphics.ErrorTrap(renderer.DrawLineF(X1, Y1, X2, Y2))
+}
+
 func (c *Controller) drawRays(renderer *sdl.Renderer) {
-	var closestPt *sdl.FPoint
-	var closestWall *line
-	r := c.fovStart
-	fr := c.fovDStart
-	rect := &sdl.FRect{X: float32(c.panelW), Y: 0, W: c.panelDelta, H: 0}
-	for i := int32(0); i < c.fovRayCnt; i++ {
+	closestEntity := ClosestEntity{}
+	portalRect := &sdl.FRect{X: c.player.fov.portalRect.X + 1, Y: c.player.fov.portalRect.Y + 1, W: c.player.fov.portalDelta, H: c.player.fov.portalHeight}
+	r := c.player.fov.RayStart
+	fr := c.player.fov.fisheyeDelta
+	for i := int32(0); i < RayCount; i++ {
 		// Calculate the distance to a wall for each ray
-		pt := c.translatePoint(c.ray.pos, r, 8)
-		closestPt = nil
+		pt := c.translatePoint(c.player.position, r, 8)
 		distance := math.MaxFloat64
 		for _, wall := range c.walls {
-			pt2 := c.rayToWallIntersect(c.ray.pos.X, c.ray.pos.Y, pt.X, pt.Y, wall.X1, wall.Y1, wall.X2, wall.Y2)
+			pt2 := c.rayToWallIntersect(c.player.position.X, c.player.position.Y, pt.X, pt.Y, wall.X1, wall.Y1, wall.X2, wall.Y2)
 			if pt2 != nil { // intersects with wall
-				rayLength := c.lineLength(c.ray.pos.X, c.ray.pos.Y, pt2.X, pt2.Y)
+				rayLength := c.lineLength(c.player.position.X, c.player.position.Y, pt2.X, pt2.Y)
 				if rayLength < distance {
 					distance = rayLength
-					closestPt = pt2
-					closestWall = wall
+					closestEntity.X = pt2.X
+					closestEntity.Y = pt2.Y
+					closestEntity.color = wall.color
 				}
 			}
 		}
-		graphics.ErrorTrap(renderer.SetDrawColor(0xFF, 0xFF, 0xFF, 0x16))
-		graphics.ErrorTrap(renderer.DrawLineF(c.ray.pos.X, c.ray.pos.Y, closestPt.X, closestPt.Y))
 
-		//rect.H = graphics.FMap(float32(distance*math.Cos(fr)), 0, c.panelDiag, float32(c.height), 0)
-		rect.H = graphics.FMap(float32(distance*math.Cos(fr)), 20, c.panelDiag, 800, 100)
-		if rect.H > 0 {
-			rect.Y = float32(c.height)/2 - rect.H/2
-			//colorAlpha := uint8(graphics.FMap(rect.H*rect.H, float32(c.height*c.height), 0, 255, 0))
-			colorAlpha := uint8(255)
-			graphics.ErrorTrap(renderer.SetDrawColor(uint8(closestWall.color>>24), uint8(closestWall.color>>16), uint8(closestWall.color>>8), colorAlpha))
-			graphics.ErrorTrap(renderer.FillRectF(rect))
+		// Draw the rays until they strike the a wall
+		graphics.ErrorTrap(renderer.SetDrawColor(0xFF, 0xFF, 0xFF, 0x16))
+		graphics.ErrorTrap(renderer.DrawLineF(c.player.position.X, c.player.position.Y, closestEntity.X, closestEntity.Y))
+
+		// Calculate the 3D column
+		distance = math.Cos(fr) * distance
+		portalRect.H = c.max(float32(c.player.fov.portalDistance/distance*c.WallHeight), c.player.fov.portalHeight)
+		portalRect.Y = c.player.fov.portalRect.Y + 1 + c.player.fov.portalHeight/2 - portalRect.H/2
+
+		// Determine color
+		fColor := graphics.FMap(float32(distance*distance), 0, 400*400, 255, 0)
+		if fColor > 0 {
+			// Render 3D column
+			graphics.ErrorTrap(renderer.SetDrawColor(uint8(closestEntity.color>>24), uint8(closestEntity.color>>16), uint8(closestEntity.color>>8), uint8(fColor)))
+			graphics.ErrorTrap(renderer.FillRectF(portalRect))
 		}
 
-		r += c.fovDelta
-		fr += c.fovDelta
-		rect.X += c.panelDelta
+		// Advance to next ray location
+		r += c.player.fov.RayDelta
+		fr += c.player.fov.RayDelta
+		portalRect.X += c.player.fov.portalDelta
 	}
-
 }
 
 func (c *Controller) translatePoint(origin *sdl.FPoint, t float64, length float64) *sdl.FPoint {
@@ -214,75 +268,25 @@ func (c *Controller) wallIntersect(X1, Y1, X2, Y2, X3, Y3, X4, Y4 float32) bool 
 	return ok && 0 <= u && u <= 1 && 0 <= t && t <= 1
 }
 
-func (c *Controller) moveRay(pt *sdl.FPoint) bool {
-	for _, wall := range c.walls {
-		if c.wallIntersect(c.ray.pos.X, c.ray.pos.Y, pt.X, pt.Y, wall.X1, wall.Y1, wall.X2, wall.Y2) {
-			return false
-		}
-	}
-	c.ray.pos = pt
-	return true
-}
-
 func (c *Controller) lineLength(X1, Y1, X2, Y2 float32) float64 {
 	return math.Sqrt(float64((X2-X1)*(X2-X1) + (Y2-Y1)*(Y2-Y1)))
+}
+
+func (c *Controller) setFovAngle(X int32, Y int32) {
+	c.player.direction = c.mouseDirection(c.player.position.X, c.player.position.Y, float32(X), float32(Y))
+	c.player.fov.RayStart = c.player.direction - (HorizontalFOV*math.Pi)/360 + c.player.fov.RayDelta/2
+	c.player.fov.RayEnd = c.player.direction + (HorizontalFOV*math.Pi)/360
 }
 
 func (c *Controller) mouseDirection(X1, Y1, X2, Y2 float32) float64 {
 	return math.Mod(-math.Atan2(float64(X2-X1), float64(Y2-Y1)), 2*math.Pi) + math.Pi
 }
 
-func (c *Controller) setFovAngle(X int32, Y int32) {
-	c.ray.angle = c.mouseDirection(c.ray.pos.X, c.ray.pos.Y, float32(X), float32(Y))
-	c.fovStart = c.ray.angle - c.fovDelta*float64(c.fovRayCnt/2)
-}
-
-func (c *Controller) strafe(clockwise bool) {
-	X, Y, state := sdl.GetMouseState()
-	if state == 0 {
-		offset := math.Pi / 2
-		if clockwise {
-			offset = -offset
-		}
-		c.moveRay(c.translatePoint(c.ray.pos, c.ray.angle+offset, 2))
-	} else {
-		r := c.lineLength(c.ray.pos.X, c.ray.pos.Y, float32(X), float32(Y))
-		if r == 0 {
-			return
-		}
-		t := float64(StepSize) / r
-		angle := c.ray.angle + t
-		if !clockwise {
-			angle = c.ray.angle - t
-		}
-		o := math.Sin(angle) * r
-		a := math.Cos(angle) * r
-		pt := &sdl.FPoint{X: float32(X) - float32(o), Y: float32(Y) + float32(a)}
-		if c.moveRay(pt) {
-			c.setFovAngle(X, Y)
-			c.ray.angle = angle
-		}
-	}
-}
-
-func (c *Controller) forward() {
-	X, Y, state := sdl.GetMouseState()
-	if state == 1 && math.Abs(float64(X-int32(c.ray.pos.X))+math.Abs(float64(Y-int32(c.ray.pos.Y)))) <= 2 {
-		c.moveRay(&sdl.FPoint{X: float32(X), Y: float32(Y)})
-	} else {
-		c.moveRay(c.translatePoint(c.ray.pos, c.ray.angle, 2))
-	}
-}
-
-func (c *Controller) backwards() {
-	c.moveRay(c.translatePoint(c.ray.pos, c.ray.angle+math.Pi, StepSize))
-}
-
 func (c *Controller) mouseButtonEvent(event *sdl.MouseButtonEvent) bool {
 	if event.State == 1 {
 		if event.Button == 3 {
-			c.ray.pos.X = float32(event.X)
-			c.ray.pos.Y = float32(event.Y)
+			c.player.position.X = float32(event.X)
+			c.player.position.Y = float32(event.Y)
 		} else {
 			c.setFovAngle(event.X, event.Y)
 		}
@@ -306,11 +310,12 @@ func (c *Controller) keyboardEvent(event *sdl.KeyboardEvent) bool {
 		} else if event.Keysym.Scancode == sdl.SCANCODE_P {
 			c.walls = c.walls[:4]
 			for i := 0; i < 5; i++ {
-				c.walls = append(c.walls, &line{
-					X1: float32(rand.Int31n(c.width / 2)),
-					Y1: float32(rand.Int31n(c.height)),
-					X2: float32(rand.Int31n(c.width / 2)),
-					Y2: float32(rand.Int31n(c.height)),
+				c.walls = append(c.walls, &Wall{
+					X1:    float32(rand.Int31n(c.arenaWidth / 2)),
+					Y1:    float32(rand.Int31n(c.arenaHeight)),
+					X2:    float32(rand.Int31n(c.arenaWidth / 2)),
+					Y2:    float32(rand.Int31n(c.arenaHeight)),
+					color: WallColors[i],
 				})
 				fmt.Printf(
 					"{X1:%d, Y1:%d, X2:%d, Y2:%d},\n",
@@ -321,4 +326,73 @@ func (c *Controller) keyboardEvent(event *sdl.KeyboardEvent) bool {
 		return true
 	}
 	return false
+}
+
+func (c *Controller) movePlayer(pt *sdl.FPoint) bool {
+	for _, wall := range c.walls {
+		if c.wallIntersect(c.player.position.X, c.player.position.Y, pt.X, pt.Y, wall.X1, wall.Y1, wall.X2, wall.Y2) {
+			return false
+		}
+	}
+	c.player.position = pt
+	return true
+}
+
+func (c *Controller) forward() {
+	X, Y, state := sdl.GetMouseState()
+	if state == 1 && math.Abs(float64(X-int32(c.player.position.X))+math.Abs(float64(Y-int32(c.player.position.Y)))) <= 2 {
+		c.movePlayer(&sdl.FPoint{X: float32(X), Y: float32(Y)})
+	} else {
+		c.movePlayer(c.translatePoint(c.player.position, c.player.direction, 2))
+	}
+}
+
+func (c *Controller) backwards() {
+	c.movePlayer(c.translatePoint(c.player.position, c.player.direction+math.Pi, StepSize))
+}
+
+func (c *Controller) rotate(clockwise bool) {
+	if clockwise {
+		c.player.direction += math.Pi / 90
+	} else {
+		c.player.direction -= math.Pi / 90
+	}
+	c.player.fov.RayStart = c.player.direction - (HorizontalFOV*math.Pi)/360 + c.player.fov.RayDelta/2
+	c.player.fov.RayEnd = c.player.direction + (HorizontalFOV*math.Pi)/360
+}
+
+func (c *Controller) strafe(clockwise bool) {
+	X, Y, state := sdl.GetMouseState()
+	if state == 0 {
+		offset := math.Pi / 2
+		if clockwise {
+			offset = -offset
+		}
+		c.movePlayer(c.translatePoint(c.player.position, c.player.direction+offset, 2))
+	} else {
+		r := c.lineLength(c.player.position.X, c.player.position.Y, float32(X), float32(Y))
+		if r == 0 {
+			return
+		}
+		t := float64(StepSize) / r
+		angle := c.player.direction + t
+		if !clockwise {
+			angle = c.player.direction - t
+		}
+		o := math.Sin(angle) * r
+		a := math.Cos(angle) * r
+		pt := &sdl.FPoint{X: float32(X) - float32(o), Y: float32(Y) + float32(a)}
+		if c.movePlayer(pt) {
+			c.setFovAngle(X, Y)
+			c.player.direction = angle
+		}
+	}
+}
+
+func (c *Controller) max(height float32, maxHeight float32) float32 {
+	if height > maxHeight {
+		height = maxHeight
+	}
+	return height
+
 }

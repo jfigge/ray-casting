@@ -18,6 +18,6 @@ const (
 )
 
 func main() {
-	graphics.Open("Ray Caster", screenWidth, screenHeight, internal.NewController(screenWidth, screenHeight))
+	graphics.Open("Ray Caster", screenWidth, screenHeight, internal.NewController())
 	fmt.Println("Game over")
 }
