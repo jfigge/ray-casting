@@ -33,7 +33,7 @@ const (
 	PlayerStartY  = 300
 	PlayerHeight  = 100
 	PortalWidth   = 320
-	HorizontalFOV = 90
+	HorizontalFOV = 60
 	VerticalFOV   = 45
 	RayCount      = 50
 )
@@ -59,17 +59,18 @@ type Player struct {
 }
 
 type Fov struct {
-	portalWidth    int32
-	portalHeight   float32
-	portalRect     *sdl.FRect
-	portalDistance float64
-	portalDelta    float32
-	fisheyeDelta   float64
-	hFOV           float64
-	vFOV           float64
-	RayDelta       float64
-	RayStart       float64
-	RayEnd         float64
+	portalWidth      int32
+	portalHeight     float32
+	portalRect       *sdl.FRect
+	portalDistance   float64
+	portalBrightness float32
+	portalDelta      float32
+	fisheyeDelta     float64
+	hFOV             float64
+	vFOV             float64
+	RayDelta         float64
+	RayStart         float64
+	RayEnd           float64
 }
 
 type Controller struct {
@@ -80,6 +81,7 @@ type Controller struct {
 	WallHeight  float64
 	walls       []*Wall
 	player      Player
+	shiftDown   bool
 }
 
 func NewController() *Controller {
@@ -113,6 +115,7 @@ func NewController() *Controller {
 		},
 	}
 	c.player.fov.portalDistance = float64(c.player.fov.portalWidth/2) / math.Tan(c.player.fov.hFOV/2)
+	c.player.fov.portalBrightness = float32(c.player.fov.portalDistance * c.player.fov.portalDistance * 2.25)
 	c.player.fov.portalHeight = float32(math.Floor(math.Tan(c.player.fov.vFOV/2) * c.player.fov.portalDistance * 2))
 	c.player.fov.portalRect = &sdl.FRect{
 		X: float32(ArenaWidth + ArenaWidth/2 - c.player.fov.portalWidth/2 - 1),
@@ -156,10 +159,18 @@ func (c *Controller) OnUpdate() {
 		c.backwards()
 	}
 
-	if codes[sdl.SCANCODE_A] == 1 {
-		c.strafe(true)
-	} else if codes[sdl.SCANCODE_D] == 1 {
-		c.strafe(false)
+	if c.shiftDown {
+		if codes[sdl.SCANCODE_A] == 1 {
+			c.strafe(true)
+		} else if codes[sdl.SCANCODE_D] == 1 {
+			c.strafe(false)
+		}
+	} else {
+		if codes[sdl.SCANCODE_A] == 1 {
+			c.rotate(false)
+		} else if codes[sdl.SCANCODE_D] == 1 {
+			c.rotate(true)
+		}
 	}
 }
 
@@ -182,12 +193,12 @@ func (c *Controller) drawPortal(renderer *sdl.Renderer) {
 	graphics.ErrorTrap(renderer.SetDrawColor(uint8(0xff), uint8(0), uint8(0), uint8(0xff)))
 	graphics.ErrorTrap(renderer.DrawRectF(c.player.fov.portalRect))
 
-	//X1 := c.player.position.X + float32(math.Sin(c.player.fov.RayStart-c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
-	//Y1 := c.player.position.Y - float32(math.Cos(c.player.fov.RayStart-+c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
-	//X2 := c.player.position.X + float32(math.Sin(c.player.fov.RayEnd)*c.player.fov.portalDistance)
-	//Y2 := c.player.position.Y - float32(math.Cos(c.player.fov.RayEnd)*c.player.fov.portalDistance)
-	//graphics.ErrorTrap(renderer.SetDrawColor(uint8(0xff), uint8(0), uint8(0), uint8(0x80)))
-	//graphics.ErrorTrap(renderer.DrawLineF(X1, Y1, X2, Y2))
+	X1 := c.player.position.X + float32(math.Sin(c.player.fov.RayStart-c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
+	Y1 := c.player.position.Y - float32(math.Cos(c.player.fov.RayStart-+c.player.fov.RayDelta/2)*c.player.fov.portalDistance)
+	X2 := c.player.position.X + float32(math.Sin(c.player.fov.RayEnd)*c.player.fov.portalDistance)
+	Y2 := c.player.position.Y - float32(math.Cos(c.player.fov.RayEnd)*c.player.fov.portalDistance)
+	graphics.ErrorTrap(renderer.SetDrawColor(uint8(0xff), uint8(0), uint8(0), uint8(0x80)))
+	graphics.ErrorTrap(renderer.DrawLineF(X1, Y1, X2, Y2))
 }
 
 func (c *Controller) drawRays(renderer *sdl.Renderer) {
@@ -222,7 +233,7 @@ func (c *Controller) drawRays(renderer *sdl.Renderer) {
 		portalRect.Y = c.player.fov.portalRect.Y + 1 + c.player.fov.portalHeight/2 - portalRect.H/2
 
 		// Determine color
-		fColor := graphics.FMap(float32(distance*distance), 0, 400*400, 255, 0)
+		fColor := graphics.FMap(float32(distance*distance), 0, c.player.fov.portalBrightness, 255, 0)
 		if fColor > 0 {
 			// Render 3D column
 			graphics.ErrorTrap(renderer.SetDrawColor(uint8(closestEntity.color>>24), uint8(closestEntity.color>>16), uint8(closestEntity.color>>8), uint8(fColor)))
@@ -304,6 +315,7 @@ func (c *Controller) mouseMotionEvent(event *sdl.MouseMotionEvent) bool {
 }
 
 func (c *Controller) keyboardEvent(event *sdl.KeyboardEvent) bool {
+	c.shiftDown = event.Keysym.Mod&1 == 1
 	if event.State == 1 {
 		if event.Keysym.Scancode == sdl.SCANCODE_Q {
 			c.Quit()
